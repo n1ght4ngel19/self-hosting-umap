@@ -1,0 +1,74 @@
+services:
+  # Useful only to use the real time collaboration
+  redis:
+    image: docker.io/redis:latest
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 5
+    command: ["redis-server"]
+
+  db:
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+    image: docker.io/postgis/postgis:14-3.3-alpine
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    volumes:
+      - db:/var/lib/postgresql/data
+
+  app:
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    image: docker.io/umap/umap:3.8.1
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+    environment:
+      - STATIC_ROOT=/srv/umap/static
+      - MEDIA_ROOT=/srv/umap/uploads
+      - DATABASE_URL=postgis://postgres@db/postgres
+      - SECRET_KEY=${UMAP_SECRET}
+      - SITE_URL=http://localhost:${UMAP_PORT}
+      - UMAP_ALLOW_ANONYMOUS=True
+      - ENABLE_ACCOUNT_LOGIN=1
+      - DEBUG=0
+      - REALTIME_ENABLED=1
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ${DATA_ROOT}/umap.conf:/etc/umap/umap.conf:ro
+      - ${DATA_ROOT}/icons:/srv/umap/icons:ro
+      - data:/srv/umap/uploads
+      - static:/srv/umap/static
+
+  proxy:
+    image: docker.io/nginx:latest
+    ports:
+      - ${UMAP_PORT}:80
+    volumes:
+      - ${DATA_ROOT}/umap-snippet.conf:/etc/nginx/snippets/umap.conf:ro
+      - ${DATA_ROOT}/nginx.conf:/etc/nginx/nginx.conf:ro
+      - static:/static:ro
+      - data:/data:ro
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  data:
+  static:
+  db:
